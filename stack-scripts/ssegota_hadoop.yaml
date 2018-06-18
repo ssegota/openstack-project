@@ -1,0 +1,258 @@
+heat_template_version: 2013-05-23
+description: Template za instalaciju Hadoop i Hive distribucije.
+
+parameters:
+  image:
+    type: string
+    label: Image name or ID
+    description: Image to be used for server. Please use an Ubuntu based image.
+  flavor:
+    type: string
+    label: Flavor
+    description: Type of instance (flavor) to be used on the compute instance.
+  key:
+    type: string
+    label: Key name
+    description: Name of key-pair to be installed on the compute instance.
+  private_network:
+    type: string
+    label: Private network name or ID
+    description: Network to attach server to.
+
+resources:
+  wait_condition:
+    type: OS::Heat::WaitCondition
+    properties:
+    handle: { get_resource: wait_handle }
+    count: 1
+    timeout: 600
+
+  wait_handle:
+    type: OS::Heat::WaitConditionHandle
+
+  security_group:
+    type: OS::Neutron::SecurityGroup
+    properties:
+    name: db_server_security_group
+    rules:
+    - port_range_min: 3306
+    port_range_max: 3306
+    protocol: tcp
+    direction: ingress
+    - port_range_min: 3306
+    port_range_max: 3306
+    protocol: tcp
+    direction: egress
+
+  port:
+    type: OS::Neutron::Port
+    properties:
+    network: { get_param: private_network }
+    security_groups:
+    - { get_resource: security_group }
+    - default
+  
+  hadoop_instance:
+    type: OS::Nova::Server
+    properties:
+      image: { get_param: image }
+      flavor: { get_param: flavor }
+      key_name: { get_param: key }
+    networks:
+      - port: { get_resource: port }
+    user_data_format: RAW
+    user_data:
+      str_replace:
+        params:
+          wc_notify: { get_attr: ['wait_handle', 'curl_cli'] }
+        template: |
+          #!/bin/bash
+
+          # install MySQL
+          echo "deb-src http://172.24.4.1/debs/ amd64/" > /etc/apt/source.list
+          apt-get update
+          export DEBIAN_FRONTEND=noninteractive
+          yes | apt-get install -y mysql-server
+
+          echo Mysql server installed
+
+          yes | sudo apt install git
+
+          # configure MySQL root password
+          mysqladmin -u root password "ssegota1995"
+          
+          # listen on all network interfaces
+          sed -i "s/bind-address.*/bind-address = 0.0.0.0/" /etc/mysql/my.cnf
+          
+          # restart service
+          service mysql restart
+
+          echo Mysql configured
+
+          #java instalacija
+          yes | sudo add-apt-repository ppa:webupd8team/java
+          yes | sudo apt-get update
+          export DEBIAN_FRONTEND=noninteractive
+          echo "sun-java6-bin shared/accepted-sun-dlj-v1-1 boolean true" | 
+                debconf-set-selections
+
+          sudo -E apt install -y openjdk-8-jre-headless
+          yes | sudo apt install -y openssh-server openssh-client ssh
+
+          #env varijable za javu
+
+          echo Java config
+          cat >> /etc/environment <<EOL
+          JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64/
+          JRE_HOME=/usr/lib/jvm/java-8-openjdk-amd64/jre
+          EOL
+
+          echo Java Installed
+
+          #hadoop instalacija
+          yes | adduser --disabled-login hadoop --ingroup sudo 
+          echo hadoop:hadoop | sudo chpasswd
+
+          ssh-keygen -t rsa -P '' -f /home/hadoop/.ssh/id_rsa
+          cat /home/hadoop/.ssh/id_rsa.pub >> /home/hadoop/.ssh/authorized_keys
+          chmod 0600 /home/hadoop/.ssh/authorized_keys
+
+          echo "Host *" > ~/.ssh/config
+          echo "	StrictHostKeyChecking no" >> ~/.ssh/config
+          echo "	UserKnownHostsFile=/dev/null" >> ~/.ssh/config
+
+          echo "Host *" > /etc/ssh/ssh_config
+          echo "	StrictHostKeyChecking no" >> /etc/ssh/ssh_config
+          echo "	UserKnownHostsFile=/dev/null" >> /etc/ssh/ssh_config
+
+          echo "Host *" > /home/hadoop/.ssh/config
+          echo "	StrictHostKeyChecking no" >> /home/hadoop/.ssh/config
+          echo "	UserKnownHostsFile=/dev/null" >> /home/hadoop/.ssh/config
+
+          ssh-keygen -t rsa -P '' -f ~/.ssh/id_rsa
+          cat ~/.ssh/id_rsa.pub >> ~/.ssh/authorized_keys
+          chmod 0600 ~/.ssh/authorized_keys
+          cd /home/hadoop
+          wget http://www-eu.apache.org/dist/hadoop/common/hadoop-3.1.0/hadoop-3.1.0.tar.gz
+          tar xzfv hadoop-3.1.0.tar.gz
+          mv hadoop-3.1.0 hadoop
+
+          echo "Hadoop downloaded"
+
+          echo "export HADOOP_HOME=/home/hadoop/hadoop" >> .bashrc
+          echo "export HADOOP_INSTALL=$HADOOP_HOME" >> .bashrc
+          echo "export HADOOP_MAPRED_HOME=$HADOOP_HOME" >> .bashrc
+          echo "export HADOOP_COMMON_HOME=$HADOOP_HOME" >> .bashrc
+          echo "export HADOOP_HDFS_HOME=$HADOOP_HOME" >> .bashrc
+          echo "export YARN_HOME=$HADOOP_HOME" >> .bashrc
+          echo "export HADOOP_COMMON_LIB_NATIVE_DIR=$HADOOP_HOME/lib/native" >> .bashrc
+          echo "export PATH=$PATH:$HADOOP_HOME/sbin:$HADOOP_HOME/bin" >> .bashrc
+
+          source .bashrc
+
+          echo "export JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64/" >> /home/hadoop/hadoop/etc/hadoop/hadoop-env.sh
+          #TO-DO dodati na git - config datoteke za hadoop
+          git clone http://github.com/ssegota/openstack-project master
+
+          yes | cp -rf master/hadoop/* hadoop/etc/hadoop/
+
+          /home/hadoop/hadoop/bin/hdfs namenode -format
+
+          #hadoop start
+          cd /home/hadoop/hadoop/sbin/
+          sudo -u hadoop ./start-dfs.sh
+
+          sudo -u hadoop ./start-yarn.sh
+
+          #dodavanje podataka iz git repozitorija u hadoop
+          hdfs dfs -put /home/hadoop/master/data/1.csv /user/data/1.csv
+
+          #hive instalacija
+
+
+          echo hadoop installed
+
+          cd /home/hadoop
+          wget http-hive-3.0.0-bin hive
+          chown -R hadoop hive
+
+          export HADOOP_HOME=/home/hadoop/hadoop
+          export HADOOP_PREFIX=/home/hadoop/hadoop
+          export HIVE_HOME=/home/hadoop/hive
+          export PATH=$HIVE_HOME/bin:$PATH
+
+          cd /home/hadoop/hive
+          sudo -u hadoop /home/hadoop/hadoop/bin/hadoop fs -mkdir /tmp
+          sudo -u hadoop /home/hadoop/hadoop/bin/hadoop fs -mkdir -p /user/hive/warehouse
+          sudo -u hadoop /home/hadoop/hadoop/bin/hadoop fs -chmod g+w /tmp
+          sudo -u hadoop /home/hadoop/hadoop/bin/hadoop fs -chmod g+w /user/hive/warehouse
+
+          echo hive downloaded
+
+          yes | apt install libmysql-java
+
+          ln -s /usr/share/java/mysql-connector-java.jar $HIVE_HOME/lib/mysql-connector-java.jar
+
+          user=root
+          password=ssegota1995
+          database=metastore
+
+          mysql --user="$user" --password="$password" --execute="CREATE DATABASE metastore;"
+
+          mysql --user="$user" --password="$password" --execute="SOURCE /home/hadoop/hive/scripts/metastore/upgrade/mysql/hive-schema-3.0.0.mysql.sql;"
+
+          mysql --user="$user" --password="$password" --execute="CREATE USER 'hiveuser'@'%' IDENTIFIED BY 'hivepassword'; "
+          mysql --user="$user" --password="$password" --execute="GRANT all on *.* to 'hiveuser'@localhost identified by 'hivepassword';"
+          mysql --user="$user" --password="$password" --execute="flush privileges;"
+
+          yes | cp -rf /home/hadoop/master/hive/* /home/hadoop/hive/conf/
+
+          echo metastore created
+
+          #start hive
+          cd /home/hadoop/hive/bins://archive.apache.org/dist/hive/hive-3.0.0/apache-hive-3.0.0-bin.tar.gz
+          tar xzfv apache-hive-3.0.0-bin.tar.gz
+          mv apache-hive-3.0.0-bin hive
+          chown -R hadoop hive
+
+          export HADOOP_HOME=/home/hadoop/hadoop
+          export HADOOP_PREFIX=/home/hadoop/hadoop
+          export HIVE_HOME=/home/hadoop/hive
+          export PATH=$HIVE_HOME/bin:$PATH
+
+          cd /home/hadoop/hive
+          sudo -u hadoop /home/hadoop/hadoop/bin/hadoop fs -mkdir /tmp
+          sudo -u hadoop /home/hadoop/hadoop/bin/hadoop fs -mkdir -p /user/hive/warehouse
+          sudo -u hadoop /home/hadoop/hadoop/bin/hadoop fs -chmod g+w /tmp
+          sudo -u hadoop /home/hadoop/hadoop/bin/hadoop fs -chmod g+w /user/hive/warehouse
+
+          echo hive downloaded
+
+          yes | apt install libmysql-java
+
+          ln -s /usr/share/java/mysql-connector-java.jar $HIVE_HOME/lib/mysql-connector-java.jar
+
+          user=root
+          password=ssegota1995
+          database=metastore
+
+          mysql --user="$user" --password="$password" --execute="CREATE DATABASE metastore;"
+
+          mysql --user="$user" --password="$password" --execute="SOURCE /home/hadoop/hive/scripts/metastore/upgrade/mysql/hive-schema-3.0.0.mysql.sql;"
+
+          mysql --user="$user" --password="$password" --execute="CREATE USER 'hiveuser'@'%' IDENTIFIED BY 'hivepassword'; "
+          mysql --user="$user" --password="$password" --execute="GRANT all on *.* to 'hiveuser'@localhost identified by 'hivepassword';"
+          mysql --user="$user" --password="$password" --execute="flush privileges;"
+
+          yes | cp -rf /home/hadoop/master/hive/* /home/hadoop/hive/conf/
+
+          echo metastore created
+
+          #start hive
+          cd /home/hadoop/hive/bin
+          ./hiveserver2
+
+outputs:
+  ip:
+    description: The IP address of the hadoop instance.
+    value: { get_attr: [hadoop_instance, first_address] }

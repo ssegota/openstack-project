@@ -1,0 +1,50 @@
+heat_template_version: 2013-05-23
+
+parameters:
+    image1:
+        type: string
+        label: Image name or ID
+        description: Image to be used for server. Please use
+        default: ssegota_frontend_server
+    image2:
+        type: string
+        label: Image name or ID
+        description: Image to be used for server. Please use
+        default: ssegota_hdfs_server
+    flavor:
+        type: string
+        label: Flavor
+        description: Type of instance (flavor) to be used on
+        default: m1.small
+    flavor_hadoop:
+        type: string
+        label: Flavor
+        description: Type of instance (flavor) to be used on
+        default: m1.medium
+    key:
+        type: string
+        label: Key name
+        description: Name of key-pair to be installed on the
+        default: my_key1
+    private_network:
+        type: string
+        label: Private network name or ID
+        description: Network to attach server to.
+        default: ssegota_net
+
+resources:
+    hadoop:
+        type: ssegota_hadoop.yaml
+        properties:
+        image: { get_param: image2 }
+        flavor: { get_param: flavor_hadoop }
+        key: { get_param: key }
+        private_network: { get_param: private_network }
+    frontend:
+        type: ssegota_frontend.yaml
+        properties:
+        image: { get_param: image1 }
+        flavor: { get_param: flavor }
+        key: { get_param: key }
+        private_network: { get_param: private_network }
+        hadoop_server: { get_attr: [hadoop, ip] }

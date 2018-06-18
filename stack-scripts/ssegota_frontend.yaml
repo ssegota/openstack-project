@@ -1,0 +1,101 @@
+heat_template_version: 2013-05-23
+
+description: Template za instalaciju frontenda.
+
+  parameters:
+    image:
+      type: string
+      label: Image name or ID
+      description: Image to be used for server. Please use an Ubuntu based image.
+    flavor:
+      type: string
+      label: Flavor
+      description: Type of instance (flavor) to be used on the compute instance.
+    key:
+      type: string
+      label: Key name
+      description: Name of key-pair to be installed on the compute instance.
+    private_network:
+      type: string
+      label: Private network name or ID
+      description: Network to attach server to.
+    hadoop_server:
+      type: string
+      label: Hive database server
+      description: IP address of the Hive database server.
+
+resources:
+  wait_condition:
+    type: OS::Heat::WaitCondition
+    properties:
+    handle: { get_resource: wh }
+    count: 1
+    timeout: 600
+
+  wh:
+    type: OS::Heat::WaitConditionHandle
+  
+  security_group:
+    type: OS::Neutron::SecurityGroup
+    properties:
+      name: web_server_security_group
+      rules:
+        - port_range_min: 80
+        port_range_max: 80
+        protocol: tcp
+        direction: ingress
+        - port_range_min: 80
+        port_range_max: 80
+        protocol: tcp
+        direction: egress
+  
+  port:
+    type: OS::Neutron::Port
+    properties:
+      network: { get_param: private_network }
+      security_groups:
+      - { get_resource: security_group }
+      - default
+
+  instance_ip:
+    description: IP address of the instance
+    value: { get_attr: [my_instance, first_address] }
+
+  frontend_instance:
+    type: OS::Nova::Server
+    properties:
+      image: { get_param: image }
+      flavor: { get_param: flavor }
+      key_name: { get_param: key }
+      networks:
+        - port: { get_resource: port }
+      user_data_format: RAW
+      user_data:
+      str_replace:
+      params:
+      __instance_ip__: {get_param: instance_ip}
+      __hadoop_ip__: { get_param: hadoop_server }
+      wc_notify: { get_attr: ['wh', 'curl_cli'] }
+      template: |
+        #!/bin/bash -ex
+        #ja pisem tu
+        apt-get update
+        apt-get upgrade
+        #instalacija potrebnih programa
+        apt install git python-pip libsasl2-dev 
+        #instalacija python librarya za spajanje na hive
+        python pip sasl
+        python pip thrift
+        python pip thrift-sasl
+        python pip PyHive
+        #apache konfiguracija
+        cd /etc/apache2/
+        sed -s 's/*/__instance_ip__' ports.conf
+        sed -s 's/*/__instance_ip__' sites-available/default
+
+        touch ip_value.txt
+        echo __hadoop_ip__ >> ip_value.txt
+        #TO-DO git copy front-end fileovi - podici git repozitorij
+        #cd /var/www/
+        #git clone https://github.com/ssegota/openstack_project master
+        wc_notify --data-binary '{"status": "SUCCESS"}'
