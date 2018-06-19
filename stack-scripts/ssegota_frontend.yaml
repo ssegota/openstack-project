@@ -78,7 +78,8 @@ resources:
       wc_notify: { get_attr: ['wh', 'curl_cli'] }
       template: |
         #!/bin/bash -ex
-        #ja pisem tu
+        
+        
         apt-get update
         apt-get upgrade
         #instalacija potrebnih programa
@@ -95,7 +96,8 @@ resources:
 
         touch ip_value.txt
         echo __hadoop_ip__ >> ip_value.txt
-        #TO-DO git copy front-end fileovi - podici git repozitorij
-        #cd /var/www/
-        #git clone https://github.com/ssegota/openstack_project master
+                
+        git clone https://github.com/ssegota/openstack_project master
+        cd master/dev/
+        python communicator.py
         wc_notify --data-binary '{"status": "SUCCESS"}'
